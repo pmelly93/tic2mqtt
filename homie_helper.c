@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "broker_helper.h" 
+#include "broker_helper.h"
 #include "homie_helper.h"
 #include "tic2mqtt.h"
 
@@ -86,11 +86,11 @@ void homie_init(struct mosquitto *mosq, const struct homie_prop_attrs *attrs)
 
     for (pattrs = attrs; pattrs->prop_id != NULL; pattrs++) {
         sprintf(topic_prefix, "%s%s/%s/%s/", HOMIE_BASE_TOPIC, HOMIE_DEVICE_ID, HOMIE_NODE_ID, pattrs->prop_id);
-    
+
         // Mandatory property attributes.
         broker_publish(mosq, topic_prefix, "$name", pattrs->name, TIC_QOS);
         broker_publish(mosq, topic_prefix, "$datatype", homie_get_datatype(pattrs->datatype), TIC_QOS);
-    
+
         // Optional property attributes.
         broker_publish(mosq, topic_prefix, "$unit", pattrs->unit, TIC_QOS);
 

@@ -18,7 +18,7 @@
 #include "homie_helper.h"
 #include "tic2mqtt.h"
 
-#define TIC2MQTT_VERSION "1.0.0"
+#define TIC2MQTT_VERSION "1.0.1"
 
 #define STX 0x02
 #define ETX 0x03
@@ -167,7 +167,7 @@ static int tic_open(const char *tty)
      * - Enable input parity checking.
      * - Strip off eighth bit.
      */
-      
+
     termios.c_iflag &= ~(IXON | IXOFF | IXANY | ICRNL);
     termios.c_iflag |= INPCK | ISTRIP;
 
@@ -260,28 +260,25 @@ static int tic_read_frame(int device, char *frame)
  * @return 1 if checksum is valid, 0 else.
  */
 
-static int tic_is_checksum_ok(const char *tag, const char *data, char checksum)
+static int tic_is_checksum_ok(const char *start, const char *end, char checksum)
 {
-    unsigned char sum = ' ';
-    int i;
+    unsigned char sum = 0x00;
 
-    for (i = 0; i < strlen(tag); i++)
-        sum += tag[i];
-
-    for (i = 0; i < strlen(data); i++)
-       sum += data[i];
+    while (start <= end) {
+        sum += *start++;
+    }
 
     sum = ' ' + (sum & 0x3f);
 
 #ifdef DEBUG
-    syslog(LOG_INFO, "Checksum read: %02x computed: %02x", checksum, sum);
+    printf("Checksum read: %02x computed: %02x", checksum, sum);
 #endif // DEBUG
 
     return sum == checksum;
 }
 
 /**
- * @brief Process group if tag is found in tag_descs[]. 
+ * @brief Process group if tag is found in tag_descs[].
  * @param tag Tag.
  * @param data Data.
  * @return 0 if successful, -1 if failure.
@@ -334,36 +331,88 @@ static void tic_process_group(const char *tag, const char *data)
 
 static void tic_process_frame(char *frame)
 {
-    char *start;
-    char *end;
-    char *tag;
-    char *data;
-    char checksum;
+    char *p;
 
-    for (start = frame; *start != ETX; start++) {
-        start++; // Skip '\n'.
+    for (p = frame; *p != ETX;) {
+        char *start;
+        char *end;
+        char checksum;
+        char sep;
+        char *q;
+        char *tag;
+        char *sepp;
+        char *last;
+        char *data;
 
-        // Parse tag.
-        for (end = start; *end != ' '; end++)
-            ;
-        *end = '\0'; // Replace ' ' with '\0'.
-        tag = start;
-
-        // Parse data.
-        start = end + 1;
-        for (end = start; *end != ' '; end++)
-            ;
-        *end = '\0'; // Replace ' ' with '\0'.
-        data = start;
-
-        // Get checksum.
-        start = end + 1;
-        checksum = *start;
-
-        start++; // Skip '\r'.
-
-        if (!tic_is_checksum_ok(tag, data, checksum))
+        /* Step 1: identify the first character of the group. */
+        if (*p != '\n')
             continue;
+        start = p++;
+
+        /* Step 1: identify the last character of the group. */
+        for (;;) {
+            switch (*p) {
+            case '\r': end = p++; break;
+            case '\n':
+                syslog(LOG_ERR, "Unterminated group\n");
+                start = ++p; continue;
+            case ETX: return;
+            default: p++; continue;
+            }
+            break;
+        }
+
+        /* Step 3: identify the checksum. */
+        checksum = end[-1];
+
+        /* Step 4: identify and check the separator. */
+        sep = end[-2];
+        switch (sep) {
+        case ' ':
+        case '\t':
+            break;
+        default:
+            syslog(LOG_ERR, "Wrong separator 0x%02x: skip group\n", (unsigned char) sep);
+            continue;
+        }
+
+        /* Step 5: verify the checksum. */
+        if (!tic_is_checksum_ok(start + 1, end - 3, checksum)) {
+            syslog(LOG_ERR, "Wrong checksum: skip group\n");
+            continue;
+        }
+
+        q = start + 1;
+
+        /* Step 6: identify the first character of the tag. */
+        tag = q;
+
+        /* Step 7: identify the first separator of the group. */
+        for (sepp = NULL; q < end - 3; q++) { /* -3 to discard trailing separator before chechesum, checksum and LF. */
+            if (*q == sep) {
+                sepp = q;
+                break;
+            }
+        }
+        if (sepp == NULL) {
+            syslog(LOG_ERR, "No separator after tag: skip group\n");
+            continue;
+        }
+
+        /* Step 8: identify the last character of the tag. */
+        last = sepp;
+
+        /* Step 9: extract the tag. */
+        *last = '\0';
+
+        /* Step 10: identify the first character of the tag. */
+        data = q + 1;
+
+        /* Step 11: identify the last character of the tag. */
+        last = end - 2;
+
+        /* Step 12: extract the data. */
+        *last = '\0';
 
         tic_process_group(tag, data);
 
